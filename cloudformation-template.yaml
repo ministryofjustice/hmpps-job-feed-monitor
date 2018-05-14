@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+
+  EcsCluster:
+    Description: The ECS cluster which the Task should have run on
+    Type: String
+
+  LambdaS3Bucket:
+    Description: S3 bucket to find the Lambda function ZIP in
+    Type: String
+
+  LambdaS3Key:
+    Description: S3 object name of the Lambda function ZIP
+    Type: String
+
+  LogGroup:
+    Description: Name of the CloudWatch log group that ECS Task output is sent to
+    Type: String
+
+  SlackWebhookUrl:
+    Description: Incoming Webhook URL that Slack messages should be posted to
+    Type: String
+
+  TaskFamily:
+    Description: Name of the task definition family to look for
+    Type: String
+
+Resources:
+
+  # Lambda function
+  Lambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Monitor the execution of the HMPPS Job Feed Parser, and post to Slack if it didn't run successfully.
+      Runtime: nodejs8.10
+      Timeout: 30
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          ECS_CLUSTER: !Ref EcsCluster
+          LOG_GROUP: !Ref LogGroup
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+          TASK_FAMILY: !Ref TaskFamily
+          TZ: Europe/London
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+
+  # IAM Role used by the Lambda function
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+      Policies:
+        - PolicyName: LambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Effect: Allow
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:log-stream:*'
+              - Action:
+                  - ecs:ListTasks
+                  - ecs:DescribeTasks
+                Effect: Allow
+                Resource: '*'
+
+  # Log Group which the Lambda function logs to
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Lambda}'
+      RetentionInDays: 365
+
+  # Schedule to automatically execute the Lambda function
+  LambdaSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: !Sub 'Execute the Lambda function ${Lambda} once each night, approximately 30 minutes after the HMPPS Job Feed Parser should have executed.'
+      ScheduleExpression: cron(30 0 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt Lambda.Arn
+          Id: lambda-function
