@@ -75,6 +75,15 @@ Resources:
                 Effect: Allow
                 Resource: '*'
 
+  # Give LambdaSchedule permission to invoke the Lambda function
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt Lambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LambdaSchedule.Arn
+
   # Log Group which the Lambda function logs to
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
